@@ -1,0 +1,30 @@
+$TTL 604800
+@   IN  SOA dns1.firstzone.akram.com. admin.akram.com. (
+            2026101701   ; serial
+            3600         ; refresh
+            900          ; retry
+            72000        ; expire
+            300 )        ; negative cache ttl
+
+@           IN  NS    dns1.firstzone.akram.com.
+
+; Project hosts
+dns1        IN  A     192.168.30.2
+management  IN  A     192.168.30.2    ; SSH management target, co-hosted on the DNS server
+
+; Sample records inherited from an earlier project (used only for resolution tests)
+dns1        IN  AAAA  fd00:0:0:1::1
+web         IN  A     192.168.40.1
+web         IN  AAAA  fd00:0:0:2::1
+db          IN  A     192.168.40.50
+db          IN  AAAA  fd00:0:0:3::1
+@           IN  MX 10 mail1.firstzone.akram.com.
+@           IN  MX 20 mail2.firstzone.akram.com.
+mail1       IN  A     192.168.60.1
+mail1       IN  AAAA  fd00:0:0:4::1
+mail2       IN  A     192.168.60.2
+mail2       IN  AAAA  fd00:0:0:4::2
+@           IN  TXT   "this server is managed by akram"
+@           IN  TXT   "v=spf1 ip4:10.0.0.2 -all"
+www         IN  CNAME web
+io          IN  CNAME www
