@@ -1,125 +1,158 @@
 # Zero Trust Remote Administration
 
-**WireGuard tunneling, DNS-over-TLS, and a self-hosted PKI: secure remote access to a private network with end-to-end DNS privacy, verified by 22 packet-level experiments.**
+**WireGuard tunneling, DNS-over-TLS, and a self-hosted PKI: secure remote access to a private network, with DNS queries that even the VPN gateway cannot read.**
+
+Technical report: [`docs/zero-trust-remote-administration-report.pdf`](docs/zero-trust-remote-administration-report.pdf)
+
+---
+
+## The problem
+
+Administrators manage private infrastructure from networks they do not control: home Wi-Fi, hotels, coffee shops. Exposing SSH to the internet invites constant scanning. A conventional VPN secures the transport but requires trusting the gateway with all plaintext traffic, DNS included.
+
+This project builds and tests an architecture that solves both problems:
+
+1. Only an authenticated client can reach the private network. The gateway answers nothing else.
+2. DNS queries are encrypted end to end between the client and the DNS server, so a compromised gateway cannot read them.
 
 ---
 
 ## What this project demonstrates
 
-- **Reduced attack surface.** The WireGuard gateway is the only device reachable from the untrusted network, and it answers only to cryptographically authenticated peers.
-- **Gated management access.** SSH to the management target is reachable only through the WireGuard tunnel and is never exposed directly.
-- **Self-hosted PKI.** A Root CA, isolated in a Docker container, issues the X.509 certificate used by the DNS server. No public CA is involved.
-- **End-to-end DNS privacy.** DNS queries are encrypted with DNS-over-TLS between the client and the DNS server. The WireGuard gateway forwards them but cannot read them.
-- **Layered access control.** nftables policies with default-deny rules on the gateway, the DNS server, and both routers produce a defined access control matrix.
-- **Evidence over configuration.** Each security claim is tested by an experiment that produces a captured artifact (pcap, screenshot, or command output).
+- **Reduced attack surface.** The WireGuard gateway is the only device exposed to the untrusted path, and it stays silent toward anything that is not an authenticated peer.
+- **Gated management access.** SSH to the management target is reachable only through the tunnel.
+- **Self-hosted PKI.** A Root CA, isolated in a Docker container with no network, issues the X.509 certificate used by the DNS server. No public CA is involved.
+- **End-to-end DNS privacy.** DNS-over-TLS terminates at the DNS server. The gateway forwards the TLS stream but holds no key to read it.
+- **Layered access control.** nftables policies on the gateway, the DNS server, and the routers enforce a defined access matrix.
+- **Evidence over configuration.** Each security claim is tested by an experiment that produces a captured artifact.
 
 ---
 
-## Architecture overview
+## Architecture
 
-The lab runs on VirtualBox and consists of six nodes across five networks.
+Five virtual machines and one container, connected by four routed networks and one overlay.
 
-| Network | Subnet | Members |
+| Machine | Role | Addresses |
 |---|---|---|
-| Client LAN | `192.168.10.0/24` | Client `.12`, Router 1 (LAN) `.1` |
-| DMZ | `192.168.11.0/24` | Router 1 (WAN) `.1`, Gateway (public) `.2` |
-| Internal | `192.168.20.0/24` | Router 2 (WAN) `.1`, Gateway (internal) `.2` |
-| DNS network | `192.168.30.0/24` | Router 2 (LAN) `.1`, DNS server `.2` |
-| WireGuard overlay | `10.0.0.0/29` | Gateway `10.0.0.1`, Client `10.0.0.5` |
+| Client | Remote administrator (Ubuntu) | `192.168.10.12`, tunnel `10.0.0.1` |
+| Router 1 | Simulates the internet, performs NAT | `192.168.10.1` (LAN), `192.168.11.1` (WAN) |
+| WireGuard Gateway | VPN endpoint, routing, firewall; the only exposed device (Kali Linux) | `192.168.11.2` (public), `192.168.20.2` (internal), tunnel `10.0.0.2` |
+| Router 2 | Internal routing, no NAT | `192.168.20.1` (WAN), `192.168.30.1` (LAN) |
+| DNS Server | BIND9 with DNS-over-TLS, and the SSH management target | `192.168.30.2` |
+| Certificate Authority | Private Root CA in an isolated Docker container on the DNS server | none (`--network none`) |
 
-Router 1 simulates the untrusted internet and provides NAT. The WireGuard gateway is the only device exposed to that side. The DNS server runs BIND9 with DNS-over-TLS on port 853 and also hosts the management target. The Certificate Authority runs as a Docker container on the DNS server.
+| Network | Subnet | Connects |
+|---|---|---|
+| 1, Client LAN | `192.168.10.0/24` | Client, Router 1 |
+| 2, Untrusted path | `192.168.11.0/24` | Router 1, Gateway |
+| 3, Internal | `192.168.20.0/24` | Gateway, Router 2 |
+| 4, DNS network | `192.168.30.0/24` | Router 2, DNS Server |
+| 5, WireGuard overlay | `10.0.0.0/29` | Client, Gateway |
 
 ![Network topology](diagrams/png/01-network-topology.png)
 
-*Figure 1: Physical topology (`diagrams/png/01-network-topology.png`). The logical roles and trust boundaries are shown in `diagrams/png/02-logical-architecture.png`.*
+*Network topology. Logical roles: [`02-logical-architecture.png`](diagrams/png/02-logical-architecture.png).*
 
 ---
 
 ## The Zero Trust property
 
-No node trusts another because of its network position. Every connection is authenticated cryptographically, and DNS queries are protected by a TLS session between the client and the DNS server. Because that session terminates at the DNS server, the WireGuard gateway has no key material with which to read it, even after it decrypts the tunnel.
+No machine is trusted because of where it sits on the network. Every connection is authenticated cryptographically: the tunnel requires a known WireGuard key, and the DNS server must present a certificate signed by the project's CA. DNS queries travel inside two layers: TLS between the client and the DNS server, inside WireGuard between the client and the gateway.
 
 ![DNS query lifecycle](diagrams/png/04-data-flow-lifecycle.png)
 
-*Figure 2: End-to-end DNS query lifecycle through the tunnel and DoT (`diagrams/png/04-data-flow-lifecycle.png`).*
-
-Two adversaries are considered (`diagrams/png/03-threat-model.png`):
-
 | Adversary | Can observe | Cannot observe |
 |---|---|---|
-| External observer on `192.168.11.0/24` | All WireGuard packets (outer headers, sizes, timing) | Tunnel contents, DNS query contents |
-| Compromised WireGuard gateway | Decrypted tunnel payload, connection metadata | DNS query contents (TLS terminates at the DNS server) |
+| External observer on the untrusted path | All WireGuard packets: addresses, sizes, timing | Tunnel contents, DNS queries |
+| Compromised gateway | Decrypted tunnel traffic, connection metadata, the TLS server name | DNS query contents |
 
-Endpoint compromise, private key theft, and operation at scale are out of scope.
+Threat model: [`03-threat-model.png`](diagrams/png/03-threat-model.png).
+
+---
+
+## Access control policy
+
+Default deny everywhere; only the required flows are allowed ([`06-access-control-matrix.png`](diagrams/png/06-access-control-matrix.png)).
+
+| Source | Gateway UDP/51820 | DNS server TCP/853 (DoT) | DNS server TCP/22 (SSH) | DNS server port 53 | Internet |
+|---|---|---|---|---|---|
+| Client (through the tunnel) | allow | allow | allow | deny | deny |
+| External observer | deny | deny | deny | deny | deny |
+| Routers | deny | deny | deny | deny | deny |
+
+---
+
+## Verification
+
+22 experiments, in three groups, each with a folder of artifacts (pcap, screenshots, command output) in [`experiments/`](experiments/).
+
+| # | Group | Experiments |
+|---|---|---|
+| 1 to 10 | Network and transport | Plaintext baseline, tunnel opacity, SSH trace, DNS visibility, port scan, unauthorized peer, wrong server key, AllowedIPs routing, routing table diff, packet structure |
+| 11 to 16 | PKI | CA and server certificate inspection, chain verification, untrusted, mismatched-name, and expired certificates |
+| 17 to 22 | DNS-over-TLS | Plain DNS vs DoT capture, gateway opacity, DoT through the tunnel, DoT without the tunnel, DoT without CA trust |
+
+Commands and expected results: [`experiments/README.md`](experiments/README.md).
 
 ---
 
 ## Repository structure
 
 ```
-zero-trust-remote-administration/
-├── README.md
-├── LICENSE
-├── docs/            Report, 10 chapters (Markdown)
-├── diagrams/
-│   ├── src/         6 draw.io source files
-│   └── png/         6 exported diagrams
-├── configs/
-│   ├── wireguard/   Client and gateway wg0.conf
-│   ├── bind9/       named.conf.options, named.conf.local, zone files
-│   ├── nftables/    Rulesets for gateway, DNS server, Router 1, Router 2
-│   ├── openssl/     ca.cnf, server-san.cnf
-│   ├── apparmor/    usr.sbin.named profile
-│   └── systemd/     Custom unit files, where used
-├── scripts/         Helper scripts (certificate signing, rotation)
-└── experiments/     22 subfolders: pcaps, screenshots, notes
+configs/       Configuration files for every machine, with private keys removed
+scripts/       PKI, WireGuard, verification, and helper scripts
+experiments/   One folder per experiment, with its artifacts
+diagrams/      Six diagrams: draw.io sources and PNG exports
+docs/          The technical report (PDF)
+troubleshooting.md   Problems met during the build, with causes and fixes
 ```
 
 ---
 
-## Verification evidence
+## Reproducing the project
 
-The `experiments/` directory contains one subfolder per experiment, each with the raw artifacts that support its conclusion.
-
-| # | Group | Experiment |
-|---|---|---|
-| 1–10 | Network and transport | Plaintext baseline, tunnel opacity, SSH trace, DNS visibility, port scan, unauthorized peer, wrong server key, AllowedIPs, routing table diff, packet structure |
-| 11–16 | PKI | CA and server certificate inspection, chain verification, rejection of untrusted, mismatched-SAN, and expired certificates |
-| 17–22 | DNS-over-TLS | Plain DNS vs DoT capture, gateway opacity, DoT through the tunnel, DoT without the tunnel, DoT without CA trust |
-
-Each experiment is documented with its purpose, method, raw output, interpretation, and conclusion in [`docs/09-verification-experiments.md`](docs/09-verification-experiments.md).
+1. **Machines and networks.** Create the five VMs and four VirtualBox internal networks, and assign the addresses above.
+2. **Routing.**
+   - Client: default route via `192.168.10.1`.
+   - Router 1: `192.168.30.0/24` via `192.168.11.2`.
+   - Gateway: `192.168.30.0/24` via `192.168.20.1`.
+   - DNS server: default route via `192.168.30.1`.
+   - Enable `net.ipv4.ip_forward=1` on both routers and the gateway.
+3. **DNS.** Install BIND9 on the DNS server and copy [`configs/bind9/`](configs/bind9/) into `/etc/bind/`.
+4. **Certificate Authority.** On the DNS server run `scripts/pki/01-create-ca.sh`, `02-issue-server-cert.sh`, and `03-install-server-cert.sh`. Copy `ca.crt` to the client and run `04-trust-ca-client.sh`.
+5. **DNS-over-TLS.** Add the AppArmor rule from [`configs/apparmor/`](configs/apparmor/), restart `named`, then run `scripts/verify/check-dot.sh` from the client.
+6. **WireGuard.** Generate keys with `scripts/wireguard/gen-keys.sh`, fill in [`configs/wireguard/`](configs/wireguard/), and run `wg-quick up wg0` on both ends.
+7. **Firewall.** Load the rulesets from [`configs/nftables/`](configs/nftables/), then repeat the checks.
+8. **Verify.** Run the experiments in [`experiments/`](experiments/).
 
 ---
 
-## Report
+## Limitations
 
-The full technical report is in [`docs/`](docs/):
-
-1. [Introduction](docs/01-introduction.md)
-2. [Theoretical Foundations](docs/02-theory.md)
-3. [Lab Architecture](docs/03-lab-architecture.md)
-4. [Network and DNS Layer](docs/04-network-and-dns.md)
-5. [Certificate Authority](docs/05-certificate-authority.md)
-6. [WireGuard Implementation](docs/06-wireguard-implementation.md)
-7. [DNS-over-TLS](docs/07-dns-over-tls.md)
-8. [Firewall Integration](docs/08-firewall-integration.md)
-9. [Verification Experiments](docs/09-verification-experiments.md)
-10. [Analysis](docs/10-analysis.md)
+- Endpoint compromise, private key theft, and operation at scale are out of scope.
+- DNS-over-TLS hides query content. It does not hide that a connection exists, its addresses, volume, timing, or the TLS server name.
+- The CA runs on the same host as the DNS server. A real deployment would keep it offline on a separate machine.
+- The DNS server forwards external names to public resolvers over plain DNS. That leg is outside the threat model.
+- DNSSEC validation is disabled because the VM clocks drift from real time.
+- Router 1 reproduces a home or hotel router and is not a security control.
+- Some VMs also have a VirtualBox NAT adapter, used only for installing packages. It is not part of the project's networks.
 
 ---
 
 ## Requirements
 
-- VirtualBox, with enough resources to run six Ubuntu Server VMs
-- Ubuntu Server for all nodes
-- WireGuard, BIND9 (9.20), nftables, AppArmor, systemd
+- VirtualBox, with enough resources for five VMs
+- Linux VMs: Ubuntu, and Kali Linux for the gateway
+- WireGuard, BIND 9.20, nftables, AppArmor
 - OpenSSL and Docker (Certificate Authority)
-- tcpdump, Wireshark, kdig, nmap (verification)
-
-To reproduce the lab, follow the chapters in order: network and DNS (4), Certificate Authority (5), WireGuard (6), DNS-over-TLS (7), firewall (8). Reference configurations for each are in `configs/`.
+- `tcpdump`, `tshark`/Wireshark, `kdig` (`knot-dnsutils`), `nmap`
 
 ---
 
+## Author
+
+Akram Khoulid, Networks and Telecommunications Engineering, ENSA, Université Cadi Ayyad.
+
 ## License
 
-See [LICENSE](LICENSE).
+[MIT](LICENSE)
