@@ -1,0 +1,27 @@
+// The tls block must be OUTSIDE options { } in BIND 9.20.
+tls local-tls {
+        key-file "/etc/ssl/dns-server/server.key";
+        cert-file "/etc/ssl/dns-server/server.crt";
+};
+
+options {
+        directory "/var/cache/bind";
+
+        // The whole gateway network is allowed because tunnel traffic reaches
+        // this server from the gateway's address on 192.168.20.0/24.
+        // A real deployment would allow only the gateway's static address.
+        allow-query { 192.168.20.0/24; localhost; };
+
+        recursion yes;
+        allow-recursion { localhost; 192.168.20.0/24; };
+        allow-query-cache { localhost; 192.168.20.0/24; };
+
+        forwarders { 1.1.1.1; 8.8.8.8; };
+        forward only;
+
+        listen-on port 53 { any; };
+        listen-on port 853 tls local-tls { any; };
+
+        // Disabled: VM clock skew breaks DNSSEC validation (see troubleshooting.md).
+        dnssec-validation no;
+};
