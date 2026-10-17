@@ -1,0 +1,25 @@
+#!/usr/sbin/nft -f
+# Router 1: forwards the client LAN toward the untrusted path and performs NAT.
+# Set the two interface names from `ip -br a` before loading.
+flush ruleset
+
+define LAN_IF = "CHANGE_ME"   # 192.168.10.1/24 (client side)
+define WAN_IF = "CHANGE_ME"   # 192.168.11.1/24 (toward the gateway)
+
+table inet filter {
+    chain input   { type filter hook input priority filter;   policy accept; }
+    chain output  { type filter hook output priority filter;  policy accept; }
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+        ct state established,related accept
+        ct state invalid drop
+        iifname $LAN_IF oifname $WAN_IF accept
+    }
+}
+
+table ip nat {
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        oifname $WAN_IF masquerade
+    }
+}
