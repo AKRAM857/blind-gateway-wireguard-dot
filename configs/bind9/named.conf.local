@@ -1,0 +1,9 @@
+zone "firstzone.akram.com" {
+    type master;
+    file "/etc/bind/zones/db.com.akram.firstzone";
+};
+
+zone "30.168.192.in-addr.arpa" {
+    type master;
+    file "/etc/bind/zones/db.192.168.30";
+};
