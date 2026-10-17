@@ -1,0 +1,4 @@
+# Allow named to read the TLS key and certificate used for DNS-over-TLS.
+# Add to /etc/apparmor.d/usr.sbin.named (or to the local override), then:
+#   sudo apparmor_parser -r /etc/apparmor.d/usr.sbin.named
+/etc/ssl/dns-server/** r,
