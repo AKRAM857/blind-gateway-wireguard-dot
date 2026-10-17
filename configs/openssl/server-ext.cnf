@@ -1,0 +1,4 @@
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = DNS:dns1.firstzone.akram.com, IP:192.168.30.2
