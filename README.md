@@ -51,7 +51,7 @@ Five virtual machines and one container, connected by four routed networks and o
 
 ![Network topology](diagrams/png/01-network-topology.png)
 
-*Network topology. Logical roles: [`02-logical-architecture.png`](diagrams/png/02-logical-architecture.png).*
+Network topology. Logical roles: [`02-logical-architecture.png`](diagrams/png/02-logical-architecture.png).
 
 ---
 
