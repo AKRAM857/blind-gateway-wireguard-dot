@@ -1,0 +1,41 @@
+#!/usr/sbin/nft -f
+# Gateway (Kali). Target ruleset matching the access control matrix.
+# Load:  sudo nft -c -f gateway.nft && sudo nft -f gateway.nft
+flush ruleset
+
+define PUBLIC_IF   = "eth0"   # 192.168.11.2/24, faces Router 1
+define INTERNAL_IF = "eth2"   # 192.168.20.2/24, faces Router 2
+define TUNNEL_IF   = "wg0"    # 10.0.0.2/29
+
+table inet filter {
+    chain input {
+        type filter hook input priority filter; policy drop;
+        iif "lo" accept
+        ct state established,related accept
+        ct state invalid drop
+        iifname $PUBLIC_IF udp dport 51820 accept          # WireGuard (the only exposed service)
+        iifname $TUNNEL_IF icmp type echo-request accept   # ping to the gateway's tunnel address
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+        ct state established,related accept
+        ct state invalid drop
+        # Tunnel traffic may reach only SSH and DNS-over-TLS on the DNS network.
+        # Plain DNS (port 53) is not allowed.
+        iifname $TUNNEL_IF oifname $INTERNAL_IF ip daddr 192.168.30.0/24 tcp dport { 22, 853 } accept
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+    }
+}
+
+table ip nat {
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        # Forwarded traffic leaves with the gateway's own address, so the
+        # DNS server sees the gateway and never the tunnel addresses.
+        oifname { $PUBLIC_IF, $INTERNAL_IF } masquerade
+    }
+}
