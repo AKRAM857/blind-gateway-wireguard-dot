@@ -1,0 +1,20 @@
+#!/usr/sbin/nft -f
+# Router 2: plain routing between the gateway and the DNS network. No NAT, so
+# the DNS server sees the original source address. Access policy is enforced
+# on the gateway and on the DNS server.
+# Set the two interface names from `ip -br a` before loading.
+flush ruleset
+
+define WAN_IF = "CHANGE_ME"   # 192.168.20.1/24 (toward the gateway)
+define LAN_IF = "CHANGE_ME"   # 192.168.30.1/24 (toward the DNS server)
+
+table inet filter {
+    chain input   { type filter hook input priority filter;   policy accept; }
+    chain output  { type filter hook output priority filter;  policy accept; }
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+        ct state established,related accept
+        ct state invalid drop
+        iifname $WAN_IF oifname $LAN_IF accept
+    }
+}
