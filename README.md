@@ -1,8 +1,8 @@
-# Zero Trust Remote Administration
+# Blind Gateway: Remote Administration Over WireGuard With End-to-End DNS Privacy
 
 **WireGuard tunneling, DNS-over-TLS, and a self-hosted PKI: secure remote access to a private network, with DNS queries that even the VPN gateway cannot read.**
 
-Technical report: [`docs/zero-trust-remote-administration-report.pdf`](docs/zero-trust-remote-administration-report.pdf)
+Technical report: [`docs/zero-trust-remote-administration-report.pdf`](docs/report.pdf)
 
 ---
 
